@@ -1,0 +1,19 @@
+[Unit]
+Description=SteamOS LED → WLED bridge (UDP realtime)
+After=network-online.target pipewire.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/__UID__/bus
+Environment=XDG_RUNTIME_DIR=/run/user/__UID__
+Environment=PULSE_SERVER=unix:/run/user/__UID__/pulse/native
+ExecStartPre=+/bin/chmod 666 /dev/valve-leds-shim
+ExecStart=/usr/bin/python3 /opt/steamos-led-wled/led_server.py /etc/steamos-led-wled.conf
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+modules.order
+Module.symvers
+.tmp_versions/
+.module-common.o
