@@ -2,6 +2,17 @@
 
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
+## [1.0.1] - 2026-08-11
+
+### Adicionado
+
+- WLED power on/off via HTTP on boot and shutdown
+- auto-configure WLED boot rainbow preset during install
+
+### Corrigido
+
+- install steam_effects.py alongside led_server.py
+
 ## [1.0.0] - 2026-08-09
 
 ### Adicionado
