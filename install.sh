@@ -268,7 +268,8 @@ echo "======================================"
 
 mkdir -p "$SERVER_INSTALL_DIR"
 install -m755 "$SERVER_DIR/led_server.py" "$SERVER_INSTALL_DIR/led_server.py"
-echo "Installed led_server.py to $SERVER_INSTALL_DIR"
+install -m755 "$SERVER_DIR/steam_effects.py" "$SERVER_INSTALL_DIR/steam_effects.py"
+echo "Installed led_server.py and steam_effects.py to $SERVER_INSTALL_DIR"
 
 # ── 4. Generate config file ──────────────────────────────────
 echo ""
