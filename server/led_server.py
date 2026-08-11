@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 # ══════════════════════════════════════════════════════════════════
 # Constants
@@ -95,6 +96,7 @@ def load_config(path):
         "temp_overlay": "true",
         "notify_overlay": "true",
         "audio_overlay": "true",
+        "wled_power_control": "true",
     }
     cfg = configparser.ConfigParser()
     cfg.read_dict({"steamos-led-wled": defaults})
@@ -109,6 +111,7 @@ def load_config(path):
         "temp_overlay": cfg.getboolean(section, "temp_overlay"),
         "notify_overlay": cfg.getboolean(section, "notify_overlay"),
         "audio_overlay": cfg.getboolean(section, "audio_overlay"),
+        "wled_power_control": cfg.getboolean(section, "wled_power_control"),
     }
 
 
@@ -149,6 +152,35 @@ class WLEDUdpSender:
 
     def close(self):
         self.sock.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+# WLED HTTP control (power on/off)
+# ══════════════════════════════════════════════════════════════════
+
+class WLEDHttpControl:
+    """Control WLED power state via HTTP API."""
+
+    def __init__(self, host):
+        self.base_url = f"http://{host}"
+
+    def power_on(self):
+        try:
+            urllib.request.urlopen(
+                f"{self.base_url}/win&T=1", timeout=3
+            ).read()
+            print("WLED: powered on", file=sys.stderr)
+        except Exception as e:
+            print(f"WLED power on failed: {e}", file=sys.stderr)
+
+    def power_off(self):
+        try:
+            urllib.request.urlopen(
+                f"{self.base_url}/win&T=0", timeout=3
+            ).read()
+            print("WLED: powered off", file=sys.stderr)
+        except Exception as e:
+            print(f"WLED power off failed: {e}", file=sys.stderr)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -731,6 +763,7 @@ def start_suspend_monitor(wled, num_leds):
 # ══════════════════════════════════════════════════════════════════
 
 _wled_instance = None
+_wled_http_instance = None
 _num_leds_instance = 0
 
 
@@ -741,6 +774,9 @@ def shutdown_handler(signum, frame):
     # Play shutdown animation before exiting
     if _wled_instance:
         anim_shutdown(_wled_instance, _num_leds_instance)
+    # Power off WLED after shutdown animation
+    if _wled_http_instance:
+        _wled_http_instance.power_off()
 
 
 def main():
@@ -769,15 +805,23 @@ def main():
         sys.exit(1)
 
     # Create WLED UDP sender
-    global _wled_instance, _num_leds_instance
+    global _wled_instance, _wled_http_instance, _num_leds_instance
     wled = WLEDUdpSender(cfg["wled_host"], cfg["wled_port"])
     _wled_instance = wled
     _num_leds_instance = num_output_leds
 
+    # Create WLED HTTP controller for power on/off
+    wled_http = None
+    if cfg["wled_power_control"]:
+        wled_http = WLEDHttpControl(cfg["wled_host"])
+        _wled_http_instance = wled_http
+
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
-    # Play boot animation
+    # Power on WLED and play boot animation
+    if wled_http:
+        wled_http.power_on()
     anim_boot(wled, num_output_leds)
 
     # Start overlay threads
