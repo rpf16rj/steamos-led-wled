@@ -165,18 +165,20 @@ class WLEDHttpControl:
         self.base_url = f"http://{host}"
 
     def power_on(self):
-        try:
-            urllib.request.urlopen(
-                f"{self.base_url}/win&T=1", timeout=3
-            ).read()
-            print("WLED: powered on", file=sys.stderr)
-        except Exception as e:
-            print(f"WLED power on failed: {e}", file=sys.stderr)
+        def _do_power_on():
+            try:
+                urllib.request.urlopen(
+                    f"{self.base_url}/win&T=1", timeout=2
+                ).read()
+                print("WLED: powered on", file=sys.stderr)
+            except Exception as e:
+                print(f"WLED power on failed: {e}", file=sys.stderr)
+        threading.Thread(target=_do_power_on, daemon=True).start()
 
     def power_off(self):
         try:
             urllib.request.urlopen(
-                f"{self.base_url}/win&T=0", timeout=3
+                f"{self.base_url}/win&T=0", timeout=2
             ).read()
             print("WLED: powered off", file=sys.stderr)
         except Exception as e:

@@ -328,54 +328,64 @@ base = f"http://{host}"
 timeout = 5
 
 try:
-    # 1. Get WLED state to find rainbow effect ID
-    data = json.loads(urllib.request.urlopen(f"{base}/json", timeout=timeout).read())
-    effects = data.get("info", {}).get("fx", data.get("effects", []))
+    # 1. Get WLED effects list to find rainbow effect ID
     rainbow_id = None
-    for i, name in enumerate(effects):
-        if isinstance(name, str) and "rainbow" in name.lower() and "solid" not in name.lower():
-            rainbow_id = i
-            print(f"  Found effect '{name}' (ID: {i})")
-            break
+    try:
+        effects = json.loads(urllib.request.urlopen(f"{base}/json/effects", timeout=timeout).read())
+        for i, name in enumerate(effects):
+            if isinstance(name, str) and "rainbow" in name.lower() and "solid" not in name.lower():
+                rainbow_id = i
+                print(f"  Found effect '{name}' (ID: {i})")
+                break
+    except Exception:
+        pass
+
     if rainbow_id is None:
-        # Fallback: try common IDs
-        rainbow_id = 50
-        print(f"  Rainbow effect not found in list, using fallback ID: {rainbow_id}")
+        # Fallback: Rainbow is effect ID 9 in WLED 0.14+
+        rainbow_id = 9
+        print(f"  Using fallback rainbow effect ID: {rainbow_id}")
 
     # 2. Set rainbow effect with moderate speed
     urllib.request.urlopen(
-        f"{base}/win&FX={rainbow_id}&SX=128&BP=0", timeout=timeout
+        f"{base}/win&FX={rainbow_id}&SX=128", timeout=timeout
     ).read()
     print("  Set rainbow effect")
 
-    # 3. Save current state as preset 99
-    preset_body = json.dumps({
-        "psave": 99,
-        "n": "Boot Rainbow",
-        "on": True,
-        "bri": 128,
-        "seg": [{"fx": rainbow_id, "sx": 128, "bri": 128}]
-    }).encode()
-    req = urllib.request.Request(
-        f"{base}/json/presets", data=preset_body,
-        headers={"Content-Type": "application/json"}, method="POST"
-    )
-    urllib.request.urlopen(req, timeout=timeout).read()
-    print("  Saved as preset 99: 'Boot Rainbow'")
+    # 3. Save current state as preset 99 using HTTP API
+    urllib.request.urlopen(
+        f"{base}/win&PSAVE=99", timeout=timeout
+    ).read()
+    print("  Saved as preset 99")
 
-    # 4. Set preset 99 as boot preset in config
-    cfg_body = json.dumps({"dm": {"bootPreset": 99}}).encode()
+    # 4. Set preset 99 as boot preset via JSON config API
+    #    WLED stores boot preset in def.ps (default preset)
+    cfg_body = json.dumps({"def": {"ps": 99}}).encode()
     req = urllib.request.Request(
         f"{base}/json/cfg", data=cfg_body,
         headers={"Content-Type": "application/json"}, method="POST"
     )
     urllib.request.urlopen(req, timeout=timeout).read()
     print("  Set preset 99 as WLED boot preset")
+
+    # 5. Verify by reading config back
+    try:
+        cfg_data = json.loads(urllib.request.urlopen(f"{base}/json/cfg", timeout=timeout).read())
+        boot_ps = cfg_data.get("def", {}).get("ps", None)
+        if boot_ps == 99:
+            print("  Verified: boot preset is set to 99")
+        else:
+            print(f"  WARNING: boot preset verification returned {boot_ps}")
+    except Exception:
+        pass
+
     print("  Done! WLED will show rainbow when powered on.")
 
 except Exception as e:
     print(f"  WARNING: Could not configure WLED boot preset: {e}", file=sys.stderr)
-    print("  You can configure it manually in WLED's web interface.", file=sys.stderr)
+    print("  You can configure it manually in WLED's web interface:", file=sys.stderr)
+    print("  1. Effects > select Rainbow", file=sys.stderr)
+    print("  2. Presets > Create Preset (save as ID 99)", file=sys.stderr)
+    print("  3. Settings > LED Preferences > Boot Preset > select preset 99", file=sys.stderr)
 PYEOF
 else
     echo "Skipped boot preset configuration."
