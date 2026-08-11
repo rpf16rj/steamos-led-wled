@@ -2,8 +2,11 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.pt-br.md'
+      - 'VERSION'
 
 permissions:
   contents: write
@@ -11,18 +14,132 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+      - name: Read current version
+        id: current
+        run: echo "VERSION=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+
+      - name: Increment patch version
+        id: next
+        run: |
+          IFS='.' read -r major minor patch <<< "${{ steps.current.outputs.VERSION }}"
+          new_patch=$((patch + 1))
+          echo "VERSION=${major}.${minor}.${new_patch}" >> $GITHUB_OUTPUT
+
+      - name: Update VERSION file
+        run: echo "${{ steps.next.outputs.VERSION }}" > VERSION
+
+      - name: Get current date
+        id: date
+        run: echo "DATE=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LAST_TAG}..HEAD"
+          fi
+
+          # Categorize commits by conventional commit prefix
+          ADDED=$(git log --pretty=format:"%s" $RANGE | grep -iE '^feat' | sed 's/^[^:]*: *//' | sort -u || true)
+          FIXED=$(git log --pretty=format:"%s" $RANGE | grep -iE '^fix' | sed 's/^[^:]*: *//' | sort -u || true)
+          CHANGED=$(git log --pretty=format:"%s" $RANGE | grep -iE '^(chore|refactor|perf|style)' | sed 's/^[^:]*: *//' | sort -u || true)
+          DOCS=$(git log --pretty=format:"%s" $RANGE | grep -iE '^docs' | sed 's/^[^:]*: *//' | sort -u || true)
+
+          # Build EN changelog section
+          SECTION="## [${{ steps.next.outputs.VERSION }}] - ${{ steps.date.outputs.DATE }}\n\n"
+          if [ -n "$ADDED" ]; then
+            SECTION+="### Added\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && SECTION+="- $line\n"; done <<< "$ADDED"
+            SECTION+="\n"
+          fi
+          if [ -n "$FIXED" ]; then
+            SECTION+="### Fixed\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && SECTION+="- $line\n"; done <<< "$FIXED"
+            SECTION+="\n"
+          fi
+          if [ -n "$CHANGED" ]; then
+            SECTION+="### Changed\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && SECTION+="- $line\n"; done <<< "$CHANGED"
+            SECTION+="\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            SECTION+="### Documentation\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && SECTION+="- $line\n"; done <<< "$DOCS"
+            SECTION+="\n"
+          fi
+
+          # Save to file for easier handling
+          printf '%b' "$SECTION" > /tmp/changelog_entry.md
+          cat /tmp/changelog_entry.md
+
+          # Build PT-BR changelog section
+          PT_SECTION="## [${{ steps.next.outputs.VERSION }}] - ${{ steps.date.outputs.DATE }}\n\n"
+          if [ -n "$ADDED" ]; then
+            PT_SECTION+="### Adicionado\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && PT_SECTION+="- $line\n"; done <<< "$ADDED"
+            PT_SECTION+="\n"
+          fi
+          if [ -n "$FIXED" ]; then
+            PT_SECTION+="### Corrigido\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && PT_SECTION+="- $line\n"; done <<< "$FIXED"
+            PT_SECTION+="\n"
+          fi
+          if [ -n "$CHANGED" ]; then
+            PT_SECTION+="### Alterado\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && PT_SECTION+="- $line\n"; done <<< "$CHANGED"
+            PT_SECTION+="\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            PT_SECTION+="### Documentação\n\n"
+            while IFS= read -r line; do [ -n "$line" ] && PT_SECTION+="- $line\n"; done <<< "$DOCS"
+            PT_SECTION+="\n"
+          fi
+
+          printf '%b' "$PT_SECTION" > /tmp/changelog_entry_pt.md
+
+      - name: Update CHANGELOG.md
+        run: |
+          # Insert new section after the header (line 4)
+          head -n 4 CHANGELOG.md > /tmp/changelog_new.md
+          cat /tmp/changelog_entry.md >> /tmp/changelog_new.md
+          tail -n +5 CHANGELOG.md >> /tmp/changelog_new.md
+          mv /tmp/changelog_new.md CHANGELOG.md
+
+      - name: Update CHANGELOG.pt-br.md
+        run: |
+          head -n 4 CHANGELOG.pt-br.md > /tmp/changelog_pt_new.md
+          cat /tmp/changelog_entry_pt.md >> /tmp/changelog_pt_new.md
+          tail -n +5 CHANGELOG.pt-br.md >> /tmp/changelog_pt_new.md
+          mv /tmp/changelog_pt_new.md CHANGELOG.pt-br.md
+
+      - name: Commit version bump and changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION CHANGELOG.md CHANGELOG.pt-br.md
+          git commit -m "chore: bump version to ${{ steps.next.outputs.VERSION }} [skip release]"
+          git push
+
+      - name: Create and push tag
+        run: |
+          git tag -a "v${{ steps.next.outputs.VERSION }}" -m "See CHANGELOG.md"
+          git push origin "v${{ steps.next.outputs.VERSION }}"
 
       - name: Create release archive
         run: |
           mkdir -p release
-          zip -r "release/steamos-led-wled-${{ steps.version.outputs.VERSION }}.zip" \
+          zip -r "release/steamos-led-wled-${{ steps.next.outputs.VERSION }}.zip" \
             server/ \
             leds-valve-shim/ \
             install.sh \
@@ -32,13 +149,15 @@ jobs:
             CHANGELOG.md \
             CHANGELOG.pt-br.md \
             LICENSE \
+            VERSION \
             .gitignore \
-            -x '*.o' '*.ko' '*.mod' '*.mod.c' 'Module.symvers' 'modules.order' '.tmp_versions/*'
+            -x '*.o' '*.ko' '*.mod' '*.mod.c' '*.cmd' 'Module.symvers' 'modules.order' '.tmp_versions/*' '.module-common.o'
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.next.outputs.VERSION }}
           body: |
             See [CHANGELOG.md](CHANGELOG.md) for details.
-          files: release/steamos-led-wled-${{ steps.version.outputs.VERSION }}.zip
+          files: release/steamos-led-wled-${{ steps.next.outputs.VERSION }}.zip
           generate_release_notes: false
