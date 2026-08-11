@@ -311,6 +311,78 @@ systemctl start "$SERVICE_NAME"
 
 echo "Service $SERVICE_NAME enabled and started"
 
+# ── 6. Configure WLED boot preset (optional) ──────────────────
+echo ""
+echo "======================================"
+echo "  Step 6: WLED boot preset (optional)"
+echo "======================================"
+
+read -rp "Configure a rainbow boot preset on WLED? (shows rainbow while PC boots) [Y/n]: " OPT_BOOT
+if [[ "${OPT_BOOT,,}" != "n" && "${OPT_BOOT,,}" != "no" ]]; then
+    echo "Configuring WLED boot preset..."
+    python3 - "$WLED_HOST" <<'PYEOF'
+import json, sys, urllib.request
+
+host = sys.argv[1]
+base = f"http://{host}"
+timeout = 5
+
+try:
+    # 1. Get WLED state to find rainbow effect ID
+    data = json.loads(urllib.request.urlopen(f"{base}/json", timeout=timeout).read())
+    effects = data.get("info", {}).get("fx", data.get("effects", []))
+    rainbow_id = None
+    for i, name in enumerate(effects):
+        if isinstance(name, str) and "rainbow" in name.lower() and "solid" not in name.lower():
+            rainbow_id = i
+            print(f"  Found effect '{name}' (ID: {i})")
+            break
+    if rainbow_id is None:
+        # Fallback: try common IDs
+        rainbow_id = 50
+        print(f"  Rainbow effect not found in list, using fallback ID: {rainbow_id}")
+
+    # 2. Set rainbow effect with moderate speed
+    urllib.request.urlopen(
+        f"{base}/win&FX={rainbow_id}&SX=128&BP=0", timeout=timeout
+    ).read()
+    print("  Set rainbow effect")
+
+    # 3. Save current state as preset 99
+    preset_body = json.dumps({
+        "psave": 99,
+        "n": "Boot Rainbow",
+        "on": True,
+        "bri": 128,
+        "seg": [{"fx": rainbow_id, "sx": 128, "bri": 128}]
+    }).encode()
+    req = urllib.request.Request(
+        f"{base}/json/presets", data=preset_body,
+        headers={"Content-Type": "application/json"}, method="POST"
+    )
+    urllib.request.urlopen(req, timeout=timeout).read()
+    print("  Saved as preset 99: 'Boot Rainbow'")
+
+    # 4. Set preset 99 as boot preset in config
+    cfg_body = json.dumps({"dm": {"bootPreset": 99}}).encode()
+    req = urllib.request.Request(
+        f"{base}/json/cfg", data=cfg_body,
+        headers={"Content-Type": "application/json"}, method="POST"
+    )
+    urllib.request.urlopen(req, timeout=timeout).read()
+    print("  Set preset 99 as WLED boot preset")
+    print("  Done! WLED will show rainbow when powered on.")
+
+except Exception as e:
+    print(f"  WARNING: Could not configure WLED boot preset: {e}", file=sys.stderr)
+    print("  You can configure it manually in WLED's web interface.", file=sys.stderr)
+PYEOF
+else
+    echo "Skipped boot preset configuration."
+    echo "  You can configure it manually in WLED's web interface:"
+    echo "  Settings > LED Preferences > Boot Preset"
+fi
+
 # ── Done ───────────────────────────────────────────────────────
 echo ""
 echo "======================================"
