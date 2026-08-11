@@ -2,6 +2,12 @@
 
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
+## [1.0.2] - 2026-08-11
+
+### Corrigido
+
+- WLED boot preset config and non-blocking power on
+
 ## [1.0.1] - 2026-08-11
 
 ### Adicionado
