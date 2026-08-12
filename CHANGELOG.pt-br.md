@@ -2,6 +2,12 @@
 
 Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
+## [1.0.3] - 2026-08-12
+
+### Alterado
+
+- optimize main loop to prevent stuttering under CPU load
+
 ## [1.0.2] - 2026-08-11
 
 ### Corrigido
