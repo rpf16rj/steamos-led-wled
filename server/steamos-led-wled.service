@@ -11,6 +11,9 @@ Environment=XDG_RUNTIME_DIR=/run/user/__UID__
 Environment=PULSE_SERVER=unix:/run/user/__UID__/pulse/native
 ExecStartPre=+/bin/chmod 666 /dev/valve-leds-shim
 ExecStart=/usr/bin/python3 /opt/steamos-led-wled/led_server.py /etc/steamos-led-wled.conf
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
 Restart=always
 RestartSec=5
 TimeoutStopSec=10

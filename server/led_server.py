@@ -40,6 +40,7 @@ WLED_DRGB_MODE = 2      # DRGB: sequential RGB for every LED
 WLED_TIMEOUT_SEC = 2     # seconds before WLED reverts to normal mode
 
 POLL_INTERVAL = 0.033    # ~30fps
+DEVICE_REOPEN_INTERVAL = 2.0  # reopen device every 2s (not every frame)
 
 # ══════════════════════════════════════════════════════════════════
 # Global state
@@ -126,6 +127,7 @@ class WLEDUdpSender:
         self.host = host
         self.port = port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
 
     def send_pixels(self, pixels):
         """Send a list of (r, g, b) tuples as a DRGB packet.
@@ -858,14 +860,19 @@ def main():
     effect_start_time = time.time()
     last_effect_id = None
 
+    last_reopen = time.time()
+
     while running:
-        # Reopen device to get fresh snapshot
-        try:
-            os.close(led_fd)
-            led_fd = os.open(device, os.O_RDONLY)
-        except OSError:
-            time.sleep(0.5)
-            continue
+        # Reopen device periodically (not every frame) to get fresh snapshots
+        now = time.time()
+        if now - last_reopen >= DEVICE_REOPEN_INTERVAL:
+            last_reopen = now
+            try:
+                os.close(led_fd)
+                led_fd = os.open(device, os.O_RDONLY)
+            except OSError:
+                time.sleep(0.5)
+                continue
 
         snap = read_snapshot(led_fd)
         if snap:
@@ -880,7 +887,6 @@ def main():
         else:
             final = latest
 
-        now = time.time()
         if final and (now - last_send >= POLL_INTERVAL):
             latest = final
 
