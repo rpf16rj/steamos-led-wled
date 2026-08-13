@@ -61,8 +61,8 @@ temp_blink_state = True
 temp_last_read = 0.0
 temp_current = 0.0
 TEMP_READ_INTERVAL = 2.0
-TEMP_THRESHOLD_WARM = 65
-TEMP_THRESHOLD_HOT = 80
+temp_threshold_warm = 65
+temp_threshold_hot = 80
 
 # Notification overlay
 notif_overlay_enabled = False
@@ -76,6 +76,11 @@ audio_overlay_enabled = False
 audio_level = 0.0
 audio_peak = 0.0
 audio_process = None
+audio_mode = "gradient"      # gradient, solid, steam, pulse
+audio_direction = "ltr"      # ltr, rtl, center
+audio_color_low = (0, 255, 0)
+audio_color_high = (255, 0, 0)
+audio_solid_color = (0, 174, 239)
 
 # Transition state
 prev_overlay_frame = None
@@ -98,12 +103,23 @@ def load_config(path):
         "notify_overlay": "true",
         "audio_overlay": "true",
         "wled_power_control": "true",
+        "temp_threshold_warm": "65",
+        "temp_threshold_hot": "80",
+        "audio_mode": "gradient",
+        "audio_direction": "ltr",
+        "audio_color_low": "0,255,0",
+        "audio_color_high": "255,0,0",
+        "audio_solid_color": "0,174,239",
     }
     cfg = configparser.ConfigParser()
     cfg.read_dict({"steamos-led-wled": defaults})
     if os.path.isfile(path):
         cfg.read(path)
     section = "steamos-led-wled"
+    def parse_color(val):
+        parts = val.split(",")
+        return tuple(int(p.strip()) for p in parts[:3])
+
     return {
         "wled_host": cfg.get(section, "wled_host"),
         "wled_port": cfg.getint(section, "wled_port"),
@@ -113,6 +129,13 @@ def load_config(path):
         "notify_overlay": cfg.getboolean(section, "notify_overlay"),
         "audio_overlay": cfg.getboolean(section, "audio_overlay"),
         "wled_power_control": cfg.getboolean(section, "wled_power_control"),
+        "temp_threshold_warm": cfg.getfloat(section, "temp_threshold_warm"),
+        "temp_threshold_hot": cfg.getfloat(section, "temp_threshold_hot"),
+        "audio_mode": cfg.get(section, "audio_mode"),
+        "audio_direction": cfg.get(section, "audio_direction"),
+        "audio_color_low": parse_color(cfg.get(section, "audio_color_low")),
+        "audio_color_high": parse_color(cfg.get(section, "audio_color_high")),
+        "audio_solid_color": parse_color(cfg.get(section, "audio_solid_color")),
     }
 
 
@@ -291,12 +314,12 @@ def get_max_temperature():
 
 
 def temp_to_color(temp):
-    if temp < TEMP_THRESHOLD_WARM:
+    if temp < temp_threshold_warm:
         return None, False
-    elif temp >= TEMP_THRESHOLD_HOT:
+    elif temp >= temp_threshold_hot:
         return (255, 0, 0), True
     else:
-        t = (temp - TEMP_THRESHOLD_WARM) / (TEMP_THRESHOLD_HOT - TEMP_THRESHOLD_WARM)
+        t = (temp - temp_threshold_warm) / (temp_threshold_hot - temp_threshold_warm)
         r = 255
         g = int(255 * (1 - t))
         return (r, g, 0), False
@@ -485,14 +508,51 @@ def render_vu_meter(data, out_leds, level, peak):
     peak_led = int(peak * (out_leds - 1))
 
     for i in range(out_leds):
-        vi = (out_leds - 1) - i
         off = PIXELS_OFFSET + i * PIXEL_SIZE
-        t = vi / max(out_leds - 1, 1)
-        if t < 0.5:
-            r, g, b = int(255 * t * 2), 255, 0
-        else:
-            r, g, b = 255, int(255 * (1 - (t - 0.5) * 2)), 0
 
+        # Map LED position based on direction
+        if audio_direction == "rtl":
+            vi = i
+        elif audio_direction == "center":
+            mid = (out_leds - 1) / 2.0
+            vi = (out_leds - 1) - int(abs(i - mid) * 2)
+            vi = max(0, vi)
+        else:  # ltr (default)
+            vi = (out_leds - 1) - i
+
+        t = vi / max(out_leds - 1, 1)
+
+        # Determine color based on mode
+        if audio_mode == "solid":
+            r, g, b = audio_solid_color
+        elif audio_mode == "steam":
+            r, g, b = Steam_BLUE
+        elif audio_mode == "pulse":
+            # All LEDs same color, brightness pulses with level
+            r, g, b = audio_solid_color
+            if vi < int(lit_count):
+                br = int(255 * min(1.0, level * 1.5))
+            elif vi == peak_led and peak > 0.05:
+                br = 180
+            else:
+                br = int(255 * level * 0.3)
+            data[off + 0] = r
+            data[off + 1] = g
+            data[off + 2] = b
+            data[off + 3] = br
+            continue
+        else:  # gradient (default)
+            if t < 0.5:
+                r = int(audio_color_low[0] * (1 - t * 2) + audio_color_high[0] * (t * 2))
+                g = int(audio_color_low[1] * (1 - t * 2) + audio_color_high[1] * (t * 2))
+                b = int(audio_color_low[2] * (1 - t * 2) + audio_color_high[2] * (t * 2))
+            else:
+                tt = (t - 0.5) * 2
+                r = int(audio_color_high[0] * tt + audio_color_low[0] * (1 - tt))
+                g = int(audio_color_high[1] * tt + audio_color_low[1] * (1 - tt))
+                b = int(audio_color_high[2] * tt + audio_color_low[2] * (1 - tt))
+
+        # Determine brightness based on level
         if vi < int(lit_count):
             br = 255
         elif vi < lit_count + 1 and lit_count > 0:
@@ -568,7 +628,7 @@ def apply_overlays(snapshot, out_leds):
             vu_leds = out_leds - 2 if has_temp else out_leds
             render_vu_meter(data, vu_leds, audio_level, audio_peak)
 
-        # Temperature indicator: last 2 LEDs
+        # Temperature indicator: all LEDs with gradient
         if has_temp:
             force_manual_mode(data)
             r, g, b = temp_color
@@ -577,12 +637,23 @@ def apply_overlays(snapshot, out_leds):
                 br = 255 if temp_blink_state else 0
             else:
                 br = 255
-            for i in range(out_leds - 2, out_leds):
+            # Calculate gradient factor: 0 at warm threshold, 1 at hot threshold
+            if temp_current >= temp_threshold_hot:
+                t_factor = 1.0
+            elif temp_current >= temp_threshold_warm:
+                t_factor = (temp_current - temp_threshold_warm) / (temp_threshold_hot - temp_threshold_warm)
+            else:
+                t_factor = 0.0
+            # All LEDs get temp color with brightness gradient from center
+            for i in range(out_leds):
                 off = PIXELS_OFFSET + i * PIXEL_SIZE
+                # LEDs closer to center are brighter, edges fade slightly
+                mid = (out_leds - 1) / 2.0
+                dist_factor = 1.0 - (abs(i - mid) / max(mid, 1)) * 0.3
                 data[off + 0] = r
                 data[off + 1] = g
                 data[off + 2] = b
-                data[off + 3] = br
+                data[off + 3] = int(br * dist_factor)
 
         # Crossfade on mode transition
         if current_mode != new_mode:
@@ -610,39 +681,60 @@ def apply_overlays(snapshot, out_leds):
 Steam_BLUE = (0, 174, 239)   # Steam Deck blue
 Steam_WHITE = (200, 220, 255) # Soft white
 
+ANIM_FPS = 60
 
-def anim_boot(wled, num_leds, duration=1.5):
+
+def ease_in_out_cubic(t):
+    """Smooth ease-in-out cubic interpolation."""
+    if t < 0.5:
+        return 4 * t * t * t
+    return 1 - ((-2 * t + 2) ** 3) / 2
+
+
+def ease_out_cubic(t):
+    """Decelerating ease-out."""
+    return 1 - (1 - t) ** 3
+
+
+def smooth_edge(dist, reach, softness=0.8):
+    """Anti-alias the sweep edge: full brightness inside, smooth fade at edge."""
+    if dist <= reach - softness:
+        return 1.0
+    elif dist <= reach:
+        return 1.0 - (dist - (reach - softness)) / softness
+    return 0.0
+
+
+def anim_boot(wled, num_leds, duration=1.8):
     """Boot animation: LEDs sweep on from center outward, then pulse."""
     print("Playing boot animation", file=sys.stderr)
-    fps = 30
-    frames = int(duration * fps)
+    fps = ANIM_FPS
     mid = num_leds / 2.0
 
-    # Phase 1: sweep from center (0.8s)
-    sweep_frames = int(0.8 * fps)
+    # Phase 1: sweep from center (1.0s) with easing
+    sweep_frames = int(1.0 * fps)
     for f in range(sweep_frames):
-        progress = f / max(sweep_frames - 1, 1)
+        t = f / max(sweep_frames - 1, 1)
+        progress = ease_in_out_cubic(t)
         reach = progress * mid
         pixels = []
         for i in range(num_leds):
             dist = abs(i - mid + 0.5)
-            if dist <= reach:
-                fade = 1.0 - (dist / mid) * 0.3
-                r = int(Steam_BLUE[0] * fade)
-                g = int(Steam_BLUE[1] * fade)
-                b = int(Steam_BLUE[2] * fade)
-                pixels.append((r, g, b))
-            else:
-                pixels.append((0, 0, 0))
+            edge = smooth_edge(dist, reach, softness=1.0)
+            fade = edge * (1.0 - (dist / mid) * 0.3)
+            r = int(Steam_BLUE[0] * fade)
+            g = int(Steam_BLUE[1] * fade)
+            b = int(Steam_BLUE[2] * fade)
+            pixels.append((r, g, b))
         wled.send_pixels(pixels)
         time.sleep(1.0 / fps)
 
-    # Phase 2: pulse bright then settle (0.7s)
-    pulse_frames = int(0.7 * fps)
+    # Phase 2: pulse bright then settle (0.8s) with ease-out
+    pulse_frames = int(0.8 * fps)
     for f in range(pulse_frames):
         t = f / max(pulse_frames - 1, 1)
-        # Bright flash then ease down
-        brightness = 1.0 + 0.5 * math.sin(t * math.pi) * (1.0 - t)
+        # Smooth pulse: rise fast, fall slow
+        brightness = 1.0 + 0.6 * math.sin(t * math.pi) * ease_out_cubic(1.0 - t)
         pixels = []
         for i in range(num_leds):
             r = min(255, int(Steam_BLUE[0] * brightness))
@@ -653,29 +745,28 @@ def anim_boot(wled, num_leds, duration=1.5):
         time.sleep(1.0 / fps)
 
 
-def anim_shutdown(wled, num_leds, duration=1.2):
+def anim_shutdown(wled, num_leds, duration=1.5):
     """Shutdown animation: LEDs fade out from edges to center, then off."""
     print("Playing shutdown animation", file=sys.stderr)
-    fps = 30
+    fps = ANIM_FPS
     frames = int(duration * fps)
     mid = num_leds / 2.0
 
     for f in range(frames):
-        progress = f / max(frames - 1, 1)
+        t = f / max(frames - 1, 1)
+        progress = ease_in_out_cubic(t)
         # Shrink lit area from edges to center
         reach = mid * (1.0 - progress)
         overall_fade = 1.0 - progress * 0.5
         pixels = []
         for i in range(num_leds):
             dist = abs(i - mid + 0.5)
-            if dist <= reach:
-                fade = overall_fade * (1.0 - (dist / mid) * 0.3)
-                r = int(Steam_BLUE[0] * fade)
-                g = int(Steam_BLUE[1] * fade)
-                b = int(Steam_BLUE[2] * fade)
-                pixels.append((r, g, b))
-            else:
-                pixels.append((0, 0, 0))
+            edge = smooth_edge(dist, reach, softness=1.0)
+            fade = overall_fade * edge * (1.0 - (dist / mid) * 0.3)
+            r = int(Steam_BLUE[0] * fade)
+            g = int(Steam_BLUE[1] * fade)
+            b = int(Steam_BLUE[2] * fade)
+            pixels.append((r, g, b))
         wled.send_pixels(pixels)
         time.sleep(1.0 / fps)
 
@@ -683,13 +774,14 @@ def anim_shutdown(wled, num_leds, duration=1.2):
     wled.send_pixels([(0, 0, 0)] * num_leds)
 
 
-def anim_suspend(wled, num_leds, duration=0.8):
+def anim_suspend(wled, num_leds, duration=1.0):
     """Suspend animation: slow fade out."""
     print("Playing suspend animation", file=sys.stderr)
-    fps = 30
+    fps = ANIM_FPS
     frames = int(duration * fps)
     for f in range(frames):
-        brightness = 1.0 - (f / max(frames - 1, 1))
+        t = f / max(frames - 1, 1)
+        brightness = 1.0 - ease_in_out_cubic(t)
         pixels = []
         for i in range(num_leds):
             r = int(Steam_BLUE[0] * brightness * 0.3)
@@ -701,26 +793,25 @@ def anim_suspend(wled, num_leds, duration=0.8):
     wled.send_pixels([(0, 0, 0)] * num_leds)
 
 
-def anim_resume(wled, num_leds, duration=0.8):
+def anim_resume(wled, num_leds, duration=1.0):
     """Resume animation: quick sweep back on."""
     print("Playing resume animation", file=sys.stderr)
-    fps = 30
+    fps = ANIM_FPS
     frames = int(duration * fps)
     mid = num_leds / 2.0
     for f in range(frames):
-        progress = f / max(frames - 1, 1)
+        t = f / max(frames - 1, 1)
+        progress = ease_out_cubic(t)
         reach = progress * mid
         pixels = []
         for i in range(num_leds):
             dist = abs(i - mid + 0.5)
-            if dist <= reach:
-                fade = progress
-                r = int(Steam_BLUE[0] * fade)
-                g = int(Steam_BLUE[1] * fade)
-                b = int(Steam_BLUE[2] * fade)
-                pixels.append((r, g, b))
-            else:
-                pixels.append((0, 0, 0))
+            edge = smooth_edge(dist, reach, softness=1.0)
+            fade = edge * progress
+            r = int(Steam_BLUE[0] * fade)
+            g = int(Steam_BLUE[1] * fade)
+            b = int(Steam_BLUE[2] * fade)
+            pixels.append((r, g, b))
         wled.send_pixels(pixels)
         time.sleep(1.0 / fps)
 
@@ -786,6 +877,8 @@ def shutdown_handler(signum, frame):
 def main():
     global latest, running, num_output_leds
     global temp_overlay_enabled, notif_overlay_enabled, audio_overlay_enabled
+    global temp_threshold_warm, temp_threshold_hot
+    global audio_mode, audio_direction, audio_color_low, audio_color_high, audio_solid_color
 
     # Load config
     conf_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONF
@@ -799,6 +892,13 @@ def main():
     temp_overlay_enabled = cfg["temp_overlay"]
     notif_overlay_enabled = cfg["notify_overlay"]
     audio_overlay_enabled = cfg["audio_overlay"]
+    temp_threshold_warm = cfg["temp_threshold_warm"]
+    temp_threshold_hot = cfg["temp_threshold_hot"]
+    audio_mode = cfg["audio_mode"]
+    audio_direction = cfg["audio_direction"]
+    audio_color_low = cfg["audio_color_low"]
+    audio_color_high = cfg["audio_color_high"]
+    audio_solid_color = cfg["audio_solid_color"]
 
     # Open LED device
     device = cfg["device"]
