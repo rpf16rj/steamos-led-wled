@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-08-13
+
+### Added
+
+- configurable temp thresholds, VU meter modes/directions/colors, smoother animations
+
 ## [1.0.3] - 2026-08-12
 
 ### Changed
