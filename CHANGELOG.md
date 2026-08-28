@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5] - 2026-08-28
+
+### Fixed
+
+- auto-rebuild kernel module on vermagic mismatch, hold LEDs on after boot
+
 ## [1.0.4] - 2026-08-13
 
 ### Added
