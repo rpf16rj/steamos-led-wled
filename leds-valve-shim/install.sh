@@ -22,12 +22,21 @@ build_module() {
 
 [ -f "$SRC" ] || build_module
 
-# Verify vermagic matches the running kernel.
-VERMAGIC=$(modinfo -F vermagic "$SRC" | awk '{print $1}')
+# Verify vermagic matches the running kernel; rebuild if mismatch.
+VERMAGIC=$(modinfo -F vermagic "$SRC" 2>/dev/null | awk '{print $1}')
 if [ "$VERMAGIC" != "$REL" ]; then
-	echo "ERROR: module vermagic '$VERMAGIC' does not match running kernel '$REL'"
-	echo "Rebuild the module on this kernel before installing."
-	exit 1
+	echo "Module vermagic '$VERMAGIC' does not match running kernel '$REL'"
+	echo "Rebuilding module for current kernel..."
+	make -C "$HERE" clean >/dev/null 2>&1 || true
+	make -C "$HERE" || {
+		echo "Build failed. Ensure linux-headers for $REL and make/gcc are installed."
+		exit 1
+	}
+	VERMAGIC=$(modinfo -F vermagic "$SRC" 2>/dev/null | awk '{print $1}')
+	if [ "$VERMAGIC" != "$REL" ]; then
+		echo "ERROR: rebuilt module vermagic '$VERMAGIC' still does not match '$REL'"
+		exit 1
+	fi
 fi
 echo "vermagic OK: $VERMAGIC"
 

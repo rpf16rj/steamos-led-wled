@@ -744,6 +744,10 @@ def anim_boot(wled, num_leds, duration=1.8):
         wled.send_pixels(pixels)
         time.sleep(1.0 / fps)
 
+    # Phase 3: hold LEDs on at steady blue until main loop takes over
+    hold_pixels = [(Steam_BLUE[0], Steam_BLUE[1], Steam_BLUE[2]) for _ in range(num_leds)]
+    wled.send_pixels(hold_pixels)
+
 
 def anim_shutdown(wled, num_leds, duration=1.5):
     """Shutdown animation: LEDs fade out from edges to center, then off."""
@@ -955,6 +959,9 @@ def main():
     last_raw_snap = read_snapshot(led_fd)
     if last_raw_snap:
         latest = last_raw_snap
+    else:
+        # Keep LEDs blue from boot animation until real data arrives
+        latest = None  # will be set on first valid snapshot
 
     last_send = 0.0
     effect_start_time = time.time()
@@ -984,6 +991,13 @@ def main():
         if last_raw_snap:
             remapped = remap_snapshot(last_raw_snap, num_output_leds)
             final = apply_overlays(remapped, num_output_leds)
+        elif latest is None:
+            # No real data yet: keep sending blue hold from boot animation
+            hold_pixels = [(Steam_BLUE[0], Steam_BLUE[1], Steam_BLUE[2])
+                           for _ in range(num_output_leds)]
+            wled.send_pixels(hold_pixels)
+            time.sleep(POLL_INTERVAL)
+            continue
         else:
             final = latest
 
